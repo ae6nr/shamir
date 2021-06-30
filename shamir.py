@@ -7,6 +7,7 @@ class Shamir:
     def __init__(self,p):
         # parameters
         self.F = ffield.FField(p) # finite field with 2**p elements
+        self.stype = np.uint32 # self._calcType(p). I chose this because I haven't gotten p > 30 working.
 
     def _evalPoly(self,a,x):
         """
@@ -16,7 +17,7 @@ class Shamir:
         e.g.
         if a is (3,), a represents a[0] * x**2 + a[1] * x + a[2]
         This function evaluates this polynomial as ((a[0] + x) * a[1]) + x * a[2].
-        (This is to reduce the number of multiplies.)
+        This is called Horner's method, and it is used to reduce the number of multiplies.
         """
         y = a[0]
         for i in range(1,len(a)):
@@ -30,10 +31,10 @@ class Shamir:
         A new random polynomial is generated each time this function is called.
         Returns a dictionary of shares with the input to the polynomial as the key and the output as the value.
         """
-        F = self.F
-        a = np.zeros((k,),dtype='int')
+        # generate a random polynomial
+        a = np.zeros((k,),dtype=self.stype)
         for i in range(0,k-1): # select random coefficients
-            a[i] = F.GetRandomElement()
+            a[i] = self.F.GetRandomElement()
         a[k-1] = secret # secret is the last element
 
         # evaluate the polynomial at 1,2,...,n.
@@ -48,8 +49,10 @@ class Shamir:
         Returns the secret.
         """
         idxs = list(D.keys())
-        k = len(idxs)
+        k = len(idxs) # number of shares given
 
+        # evaluate terms of Lagrange polynomial at zero
+        # see https://en.wikipedia.org/wiki/Lagrange_polynomial
         for i in range(0,k):
             for j in range(0,k):
                 if i == j:
@@ -57,10 +60,10 @@ class Shamir:
                 else:
                     D[idxs[i]] = self.F.Divide(self.F.Multiply(D[idxs[i]],idxs[j]),self.F.Subtract(idxs[i],idxs[j]))
         
+        # sum terms to recover secret
         y = D[idxs[0]]
         for i in range(1,k):
-            y = self.F.Add(y,D[idxs[i]])
-
+            y = self.F.Add(y,D[idxs[i]]) 
         return y
 
 
@@ -69,21 +72,19 @@ if __name__ == "__main__":
     # example usage
     n = 6 # number of shares
     k = 4 # threshold
-    h = 16 # number of bits of entropy
+    h = 30 # number of bits of entropy (I run into issues using more than thirty on my computer)
     s = Shamir(h) # h bits max entropy
-    secret = np.random.randint(0,2**h) # the secret to share
+    secret = 0x0c07fefe # the secret to share, make sure this is less than 2 ** h
     D = s.generateShares(secret,n,k) # the shares
 
     # recover secret only using k of the n shares 
     i = np.random.choice(np.arange(0,n)+1,size=(k,),replace=False) # the indexes of the shares to use to recover the secret
-    g = {} # the given shares
-    for j in i:
-        g[j] = D[j]
-    guess = s.calcSecret(g)
+    g = {j:D[j] for j in i} # givens are randomly selected from the shares in D
+    guess = s.calcSecret(g) # reconstruct the secret
 
     # show results
     if guess == secret:
-        print(f"Sucess! The secret was {secret} and was recovered successfully from {g}.")
+        print(f"Success! The secret was {secret} and was recovered successfully from {g}.")
         if len(i) < k:
             print(f"You needed {k} shares, but you had {len(i)}. So you just got lucky in this case.")
         elif len(i) > k:
@@ -91,3 +92,5 @@ if __name__ == "__main__":
     else:
         print(f"Fail. The secret was {secret}, but you guessed {guess} from {g}.")
         print(f"You needed {k} shares, but you had {len(i)}.")
+        if len(i) >= k:
+            print(f"Did you choose a secret with too many bits of entropy?")
